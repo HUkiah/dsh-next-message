@@ -17,7 +17,7 @@ dsh plugin --profile desktop add github:HUkiah/dsh-next-message
 固定版本（pnpm 会把 git 依赖锁到具体 commit，升级要重新 add）：
 
 ```bash
-dsh plugin --profile desktop add github:HUkiah/dsh-next-message#v0.1.0
+dsh plugin --profile desktop add github:HUkiah/dsh-next-message#v0.1.1
 ```
 
 ### 从本地目录安装（开发用）
@@ -29,8 +29,8 @@ dsh plugin --profile desktop add /abs/path/to/dsh-next-message
 `add` 走的是 pnpm，所以 tarball、`file:`、绝对路径都行：
 
 ```bash
-npm pack                                            # 产出 local-dsh-next-message-0.1.0.tgz（文件名带 @local 前缀）
-dsh plugin --profile desktop add ./local-dsh-next-message-0.1.0.tgz
+npm pack                                            # 产出 local-dsh-next-message-0.1.1.tgz（文件名带 @local 前缀）
+dsh plugin --profile desktop add ./local-dsh-next-message-0.1.1.tgz
 ```
 
 ## 配置
