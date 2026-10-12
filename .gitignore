@@ -1,0 +1,6 @@
+# 运行时产物：日志里含真实对话内容，judge.json 含逐条判定，都不应随包分发
+# （现在的落点是 $DSH_HOME/next-message/，这几行是为了兜住旧版本和本地手跑）
+next-message.log
+judge.json
+node_modules/
+*.tgz

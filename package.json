@@ -1,0 +1,30 @@
+{
+  "name": "@local/dsh-next-message",
+  "version": "0.1.0",
+  "private": true,
+  "description": "在会话输入框里预测你的下一句话：一轮回复结束后给出灰色建议，Tab / 右方向键 / Enter 接受。",
+  "type": "module",
+  "main": "host.js",
+  "exports": {
+    ".": "./host.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "host.js",
+    "host-real.js",
+    "impl.js",
+    "paths.js",
+    "client.js",
+    "cordis.patch.yml",
+    "report.mjs"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  }
+}

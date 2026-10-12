@@ -1,0 +1,17 @@
+# 本 bundle 的 patch 层：把 host 半挂进 Loader。
+#
+# 这一行以前写在 profile 的 cordis.patch.yml 里，指向一个裸文件路径。
+# 应用崩溃恢复时 sanitizeProfile() 会把 profile patch 改名挪走并重置
+# dsh.profile.bundles，那一行就消失了，插件从列表里也找不到。
+# 搬进包内之后：包留在 profile 的 dependencies 里，恢复后仍会出现在
+# Plugins 页面（已安装、未启用），点一下即可重新启用。
+- insert:
+    - id: next-message
+      name: '@local/dsh-next-message'
+      config:
+        enabled: true
+        timeoutMs: 20000
+        maxOutputTokens: 200
+        maxSuggestionChars: 60
+        maxContextChars: 6000
+        reasoningEffort: "off"
