@@ -12,7 +12,7 @@
  * 注意：本文件是静态 import 的，改它要重启应用才生效（impl.js / host-real.js
  * 走的是带时间戳 URL 的热加载，本文件不在那条路径上）。
  */
-import { existsSync, mkdirSync, renameSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths';
@@ -35,13 +35,24 @@ try {
 
 /**
  * 一次性搬迁：旧版本把这两个文件写在包目录里。
- * 只在目标不存在时搬，避免覆盖新数据；失败也不影响加载。
+ *
+ * 两种情形都要照顾：
+ *   - 目标不存在 → 直接 rename（保住历史与 mtime）。
+ *   - 目标已存在 → 说明换到新路径之后，还在跑的旧 host 半又往包目录写了几行，
+ *     追加进去而不是丢掉，然后删掉旧文件。
+ * 幂等：搬迁完成后再加载，legacy 不存在，什么都不做。
  */
 try {
   for (const name of ['next-message.log', 'judge.json']) {
     const legacy = join(HERE, name);
+    if (!existsSync(legacy)) continue;
     const current = join(DATA_DIR, name);
-    if (existsSync(legacy) && !existsSync(current)) renameSync(legacy, current);
+    if (existsSync(current)) {
+      appendFileSync(current, readFileSync(legacy));
+      rmSync(legacy);
+    } else {
+      renameSync(legacy, current);
+    }
   }
 } catch {
   // 跨设备（旧文件不存在）或权限不足：忽略。
