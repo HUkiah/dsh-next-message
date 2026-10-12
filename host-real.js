@@ -293,7 +293,7 @@ class NextMessageService extends Service {
         return;
       }
       channel.shadow = { turn, text: verdict.text, effort: shadowEffort, ms };
-      log({ kind: 'shadow', turn, effort: shadowEffort, text: verdict.text, ms, chars: verdict.text.length });
+      log({ kind: 'shadow', turn, effort: shadowEffort, text: verdict.text, ms, chars: verdict.text.length, rawChars: verdict.rawChars, clipped: verdict.clipped === true });
     } catch (error) {
       log({ kind: 'shadow-failed', turn, effort: shadowEffort, message: String(error) });
     } finally {
@@ -512,6 +512,10 @@ class NextMessageService extends Service {
         ms: Date.now() - startedAt,
         contextChars: context.length,
         chars: verdict.text.length,
+        // 上限裁剪的可观测性：rawChars 是裁前的码点长度，clipped 表示这条被裁过。
+        // 注意与上面的 truncated 区分：那个说的是流被 max-tokens 截断，不是字符上限。
+        rawChars: verdict.rawChars,
+        clipped: verdict.clipped === true,
         truncated,
         openTodos,
         todoProbe,

@@ -80,7 +80,7 @@ dsh plugin --profile desktop add ./local-dsh-next-message-0.1.1.tgz
 | `enabled` | `true` | 总开关 |
 | `timeoutMs` | `20000` | 单次预测的超时，超时就这一轮不出建议 |
 | `maxOutputTokens` | `200` | 预测调用的输出上限 |
-| `maxSuggestionChars` | `60` | 建议长于这个值直接丢弃（宁可不给，也不给半句） |
+| `maxSuggestionChars` | `60` | 字符上限。超出时按**最近的子句边界**裁剪（句末标点保留，逗号/分号丢掉）；裁完不足上限一半就整条丢弃——不硬切，宁可不给半句。裁剪会记 `rawChars` / `clipped` 到日志 |
 | `maxContextChars` | `6000` | 送给模型的上下文上限 |
 | `reasoningEffort` | `"off"` | 预测调用用的推理档位。调高会明显变慢，输入框里的等待是有感知的 |
 

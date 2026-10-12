@@ -23,6 +23,10 @@ export const SYSTEM = [
   'You write the one message a developer is about to type into the input box of an AI coding',
   'assistant. The assistant just finished its turn; the developer is deciding what to say.',
   '',
+  'This is an app-generated request: the developer did not write it. Your suggestion appears in',
+  'their empty composer, and they may accept it, edit it or ignore it \u2014 it is never sent',
+  'automatically. So write their message, not a reply to this request.',
+  '',
   'Your main job is ONE thing. Work happens in steps: a step finishes, and the developer wants to',
   'tell the assistant to carry on with the next one. Hand them that sentence. They will press Tab',
   'and send it instead of typing it themselves. So, in order of preference:',
@@ -34,6 +38,9 @@ export const SYSTEM = [
   ' 3. THE DOUBT, when the developer would more likely question the assistant than instruct it:',
   '    something the assistant left vague, decided silently, or a risk it glossed over. Write it the',
   '    way the developer would ask it out loud \u2014 not as a summary or a status report.',
+  '',
+  'When several continuations are possible, pick the single strongest grounded move and commit to it.',
+  'Being unsure of the exact wording, or of incidental details, is not a reason to return null.',
   '',
   'Reply with ONE JSON object and nothing else. No fences, no explanation:',
   '  {"suggestion": "<the message>"}',
@@ -54,8 +61,9 @@ export const SYSTEM = [
   'Do not copy a whole sentence of the assistant\u2019s prose verbatim, though: write it as the developer',
   'would say it. Carry their standing constraints along when they bear on that step, for example',
   '"keep the existing HTTPS and safety checks" or "ask me before changing the cluster".',
-  'Never a bare "\u7ee7\u7eed" or "ok": a complete, actionable instruction beats a vague fragment,',
-  'as long as it needs, up to about 45 characters.',
+  'Never a bare "\u7ee7\u7eed" or "ok": a complete, actionable instruction beats a vague fragment.',
+  'Aim for one clause, under 45 characters. Past 60 the suggestion is cut at the last clause boundary,',
+  'so put the requirement that matters most first.',
   'Never output a message the developer already sent earlier in this conversation.',
   'Never output a greeting, thanks, or filler acknowledgement.',
   'Write in the same language as the developer\u2019s most recent message, and match their tone.',
@@ -219,6 +227,39 @@ function recentUserMessages(session) {
   return out.slice(-2);
 }
 
+/** 句末标点：裁到这里时标点本身留下。 */
+const SENTENCE_END = /[。！？!?.]/;
+/** 子句边界：裁到这里时丢掉标点（建议以逗号/分号结尾会很别扭）。 */
+const CLAUSE_END = /[，；：、,;:\s]/;
+
+/**
+ * 超出上限时裁到最近的子句边界，而不是按字符硬切。
+ *
+ * 硬切会把模型好不容易带上的约束截成半个词（实测 6/64 条撞上限，其中
+ * 「…aria-live 和日期未」「…是 suggestion 还是 abstai」这种断在词中间）。
+ * 从上限往前找第一个边界，句末标点带上、子句标点丢掉；
+ * 裁完还不到上限一半，说明只剩个残句，宁可不要。
+ *
+ * @param text - 已清洗的建议。
+ * @param cap - 字符上限（按码点计）。
+ * @returns {{ text: string | null, clipped: boolean }} 裁不动时 text 为 null。
+ */
+function clipToBoundary(text, cap) {
+  const chars = [...text];
+  if (chars.length <= cap) return { text, clipped: false };
+  for (let index = cap - 1; index > 0; index -= 1) {
+    const char = chars[index];
+    const candidate = SENTENCE_END.test(char)
+      ? chars.slice(0, index + 1).join('')
+      : CLAUSE_END.test(char)
+        ? chars.slice(0, index).join('').trim()
+        : null;
+    if (candidate === null) continue;
+    return [...candidate].length * 2 >= cap ? { text: candidate, clipped: true } : { text: null, clipped: true };
+  }
+  return { text: null, clipped: true };
+}
+
 /**
  * 把模型原始输出变成最终建议。
  *
@@ -229,23 +270,31 @@ function recentUserMessages(session) {
  *   marker       输出成了「（无）」这类标记
  *   recycled     与最近两条用户消息高度重合（回收开发者自己的话）
  *   empty        清洗后为空
+ *   too-long     超过上限且找不到可用的子句边界（不硬切，宁可不给）
+ *
+ * rawChars / clipped 会一起写进日志：以前只能靠「长度正好等于上限」反推被裁，
+ * 现在能直接量裁剪率，也是 prompt 里那句长度要求的校验。
  *
  * @param raw - 模型原始输出
  * @param session - 当前会话，用于回收检测
  * @param config - 插件配置，提供 maxSuggestionChars
- * @returns {{ text: string | null, reason: string }}
+ * @returns {{ text: string | null, reason: string, rawChars: number, clipped: boolean }}
  */
 export function finalizeSuggestion(raw, session, config) {
   const envelope = parseEnvelope(raw);
-  if (envelope.kind === 'invalid') return { text: null, reason: 'invalid-json' };
-  if (envelope.value === null) return { text: null, reason: 'abstained' };
-  const text = normalizeSuggestion(envelope.value).slice(0, config?.maxSuggestionChars ?? 60);
-  if (text === '') return { text: null, reason: 'empty' };
-  if (NO_SUGGESTION.has(text.toLowerCase())) return { text: null, reason: 'marker' };
+  if (envelope.kind === 'invalid') return { text: null, reason: 'invalid-json', rawChars: 0, clipped: false };
+  if (envelope.value === null) return { text: null, reason: 'abstained', rawChars: 0, clipped: false };
+  const clean = normalizeSuggestion(envelope.value);
+  const rawChars = [...clean].length;
+  if (clean === '') return { text: null, reason: 'empty', rawChars, clipped: false };
+  if (NO_SUGGESTION.has(clean.toLowerCase())) return { text: null, reason: 'marker', rawChars, clipped: false };
+  const clipped = clipToBoundary(clean, config?.maxSuggestionChars ?? 60);
+  if (clipped.text === null) return { text: null, reason: 'too-long', rawChars, clipped: true };
+  const text = clipped.text;
   for (const earlier of recentUserMessages(session)) {
-    if (similarity(text, earlier) >= 0.9) return { text: null, reason: 'recycled' };
+    if (similarity(text, earlier) >= 0.9) return { text: null, reason: 'recycled', rawChars, clipped: clipped.clipped };
   }
-  return { text, reason: 'ok' };
+  return { text, reason: 'ok', rawChars, clipped: clipped.clipped };
 }
 
 /** 归一化后做字符二元组 Jaccard，中英文都能用。 */
