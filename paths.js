@@ -12,7 +12,7 @@
  * 注意：本文件是静态 import 的，改它要重启应用才生效（impl.js / host-real.js
  * 走的是带时间戳 URL 的热加载，本文件不在那条路径上）。
  */
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths';
@@ -34,12 +34,51 @@ try {
 }
 
 /**
+ * 逐行 JSON 的日志按时间归并，而不是简单追加。
+ *
+ * 旧 host 半可能在新代码生效之后才写下最后几行，那几行的时间戳比新文件里
+ * 已有的行更早；直接追加会让它们排到末尾，而下游（评审配对、report 的
+ * 「最近 N 对」）都按文件顺序读。时间相同的行保持各自原有顺序（稳定）。
+ * @param current - 目标文件当前内容。
+ * @param incoming - 旧文件内容。
+ * @returns 归并后的整份内容。
+ */
+function mergeLines(current, incoming) {
+  const split = (text) => text.split('\n').filter((line) => line.trim() !== '');
+  const at = (line) => {
+    try {
+      const parsed = JSON.parse(line);
+      return typeof parsed?.at === 'string' ? parsed.at : '';
+    } catch {
+      return '';
+    }
+  };
+  // 缺时间戳的行（截断写入）跟着上一行的时间，而不是被排到最前面。
+  const keyed = (lines) => {
+    let last = '';
+    return lines.map((line) => {
+      const stamp = at(line);
+      if (stamp !== '') last = stamp;
+      return { line, key: stamp === '' ? last : stamp };
+    });
+  };
+  const currentLines = keyed(split(current));
+  const incomingLines = keyed(split(incoming));
+  // 目标文件的行排在旧文件之前；时间相同的行按这个先后保持稳定。
+  return [...currentLines, ...incomingLines]
+    .map((entry, seq) => ({ ...entry, seq }))
+    .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : a.seq - b.seq))
+    .map((entry) => entry.line)
+    .join('\n') + '\n';
+}
+
+/**
  * 一次性搬迁：旧版本把这两个文件写在包目录里。
  *
  * 两种情形都要照顾：
  *   - 目标不存在 → 直接 rename（保住历史与 mtime）。
- *   - 目标已存在 → 说明换到新路径之后，还在跑的旧 host 半又往包目录写了几行，
- *     追加进去而不是丢掉，然后删掉旧文件。
+ *   - 目标已存在 → 旧 host 半在新代码生效后又写过：日志按时间归并，
+ *     judge.json 这种整份 JSON 则保留目标文件（它是更新的一份），旧文件删掉。
  * 幂等：搬迁完成后再加载，legacy 不存在，什么都不做。
  */
 try {
@@ -47,11 +86,15 @@ try {
     const legacy = join(HERE, name);
     if (!existsSync(legacy)) continue;
     const current = join(DATA_DIR, name);
-    if (existsSync(current)) {
-      appendFileSync(current, readFileSync(legacy));
+    if (!existsSync(current)) {
+      renameSync(legacy, current);
+    } else if (name.endsWith('.log')) {
+      const merged = mergeLines(readFileSync(current, 'utf8'), readFileSync(legacy, 'utf8'));
+      writeFileSync(current, merged);
       rmSync(legacy);
     } else {
-      renameSync(legacy, current);
+      // 整份 JSON 不能拼接；目标文件是新的，直接丢弃旧的那份。
+      rmSync(legacy);
     }
   }
 } catch {
