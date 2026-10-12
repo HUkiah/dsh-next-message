@@ -29,8 +29,8 @@ dsh plugin --profile desktop add /abs/path/to/dsh-next-message
 `add` 走的是 pnpm，所以 tarball、`file:`、绝对路径都行：
 
 ```bash
-npm pack                                            # 产出 dsh-next-message-0.1.0.tgz
-dsh plugin --profile desktop add ./dsh-next-message-0.1.0.tgz
+npm pack                                            # 产出 local-dsh-next-message-0.1.0.tgz（文件名带 @local 前缀）
+dsh plugin --profile desktop add ./local-dsh-next-message-0.1.0.tgz
 ```
 
 ## 配置
