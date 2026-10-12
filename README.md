@@ -115,3 +115,7 @@ node audit-sim.mjs           # 崩溃恢复后插件在 Plugins 页的状态（�
 
   注意声明之后，git / tarball 规格是**装完再判**，不通过会回滚并恢复 profile 的 `package.json` 与 lockfile。
 - 已安装的插件不会自动更新：升级 = 重新 `dsh plugin ... add <新版本或新 tag>`。
+
+## 许可证
+
+MIT，见 [LICENSE](LICENSE)。
