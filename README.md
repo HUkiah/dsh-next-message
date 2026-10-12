@@ -20,6 +20,32 @@ dsh plugin --profile desktop add github:HUkiah/dsh-next-message
 dsh plugin --profile desktop add github:HUkiah/dsh-next-message#v0.1.1
 ```
 
+### 那台机器的 git 用不了？
+
+症状：pnpm 报 `Command failed with exit code 69: git ls-remote ...`，并附一句
+`You have not agreed to the Xcode license agreements`。
+
+这跟插件无关——macOS 的 `/usr/bin/git` 是个 shim，系统许可没接受时它直接退出 69，
+于是所有走 git 的安装（git 规格的依赖、brew、npm 的 git 依赖）都装不了。两条路：
+
+**一、修 git**（推荐，一次解决，其它工具一起好）：
+
+```bash
+xcode-select -p                      # 看当前开发者目录指向哪
+sudo xcodebuild -license accept      # 装了完整 Xcode：接受许可
+sudo xcode-select --install          # 只有 Command Line Tools、没有 xcodebuild 时：重装 CLT，安装过程中点同意
+```
+
+**二、绕开 git**，用每个 release 附带的 tarball（实测在 git 完全不可用时也能装）：
+
+```bash
+dsh plugin --profile desktop add \
+  https://github.com/HUkiah/dsh-next-message/releases/download/v0.1.1/dsh-next-message-0.1.1.tgz
+```
+
+也可以把 `.tgz` 拷到那台机器上，按绝对路径装（见下一节）。代价是升级要重新下载，
+不会像 git 规格那样由 lockfile 钉住 commit。
+
 ### 从本地目录安装（开发用）
 
 ```bash
