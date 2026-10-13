@@ -15,7 +15,7 @@ dsh plugin --profile desktop add github:HUkiah/dsh-next-message
 固定版本（pnpm 会把 git 依赖锁到具体 commit，升级＝重新 add 一个新 tag）：
 
 ```bash
-dsh plugin --profile desktop add github:HUkiah/dsh-next-message#v0.1.2
+dsh plugin --profile desktop add github:HUkiah/dsh-next-message#v0.1.3
 ```
 
 Web 侧栏 **Plugins → Add plugin** 里粘贴 `https://github.com/HUkiah/dsh-next-message` 等价。安装会把这个 bundle 加进 profile 的 `dsh.profile.bundles`，并默认启用。
@@ -29,11 +29,11 @@ dsh plugin --profile desktop add \
   https://github.com/HUkiah/dsh-next-message/releases/latest/download/dsh-next-message.tgz
 ```
 
-要钉住某一版就换成带版本的文件名（`.../releases/download/v0.1.2/dsh-next-message-0.1.2.tgz`），
+要钉住某一版就换成带版本的文件名（`.../releases/download/v0.1.3/dsh-next-message-0.1.3.tgz`），
 已经下载到本地就按绝对路径装：
 
 ```bash
-dsh plugin --profile desktop add /abs/path/dsh-next-message-0.1.2.tgz
+dsh plugin --profile desktop add /abs/path/dsh-next-message-0.1.3.tgz
 ```
 
 ### 方式三：本地目录（开发用）
@@ -75,7 +75,7 @@ dsh plugin --profile desktop add /abs/path/to/dsh-next-message
 
 | 文件 | 内容 |
 |---|---|
-| `next-message.log` | 逐行 JSON。看这几类就够了：`apply`（host 半挂载，带 `scriptMtime` 能证明跑的是哪一版文件）、`diag`（自检快照）、`suggestion`（出了建议，带 `ms`/`rawChars`）、`abstain`（没出，带 `reason`）、`outcome`（建议 vs 你实际发的那句）、`judge`（离线评审汇总） |
+| `next-message.log` | 逐行 JSON。看这几类就够了：`apply`（host 半挂载，带 `scriptMtime` 能证明跑的是哪一版文件）、`diag`（自检快照）、`suggestion`（出了建议，带 `ms`/`rawChars`/`redactions`）、`abstain`（没出，带 `reason`/`rawChars`/`redactions`）、`outcome`（建议 vs 你实际发的那句）、`judge`（离线评审汇总） |
 | `judge.json` | 离线评审的逐条判定，跨轮次累积 |
 
 `abstain` 的 reason 一眼能读懂：`abstained`（模型主动沉默）、`too-long`（超上限且裁不出完整子句）、`recycled`（和你刚说过的话重合）、`invalid-json`、`marker`、`empty`。
@@ -99,6 +99,14 @@ node report.mjs --n 40 --all     # 最近 40 对 / 全部
 替换成 `[redacted:类型]` 标记而不是空串，模型仍知道这里原本是什么。**故意不做**"长随机串"这类泛化启发式——文件名、commit hash、base64 图片都会被误伤，而它们正是准确率最强的具体性信号；同理，值是 `process.env.X` / `config.x` / `${VAR}` 这类**引用**时不脱敏。
 
 三个模型边界都覆盖：预测上下文、写进日志供评审用的助手上下文、评审 payload 本身。所以 `next-message.log` 与 `judge.json` 里也不会留下密钥。
+
+怎么验证：
+
+```bash
+node redact-test.mjs        # 33 项：漏报 + 误报 + 端到端「真正发出去的那段上下文」
+```
+
+线上还有一条可见信号：每轮建议与弃权的日志行都带 `redactions`（这次上下文里抹掉了几个凭据）。它平时是 0；突然变高就说明会话里出现了像密钥的东西，值得看一眼——也是发现误报的入口。
 
 ## 开发
 
@@ -125,6 +133,7 @@ node pending-test.mjs        # 跨轮配对不被误清
 node judge-variant-test.mjs  # 评审按 primary / shadow 分组
 node diag-safety-test.mjs    # 诊断路径不抛错
 node audit-sim.mjs           # 崩溃恢复后插件在 Plugins 页的状态（只动 /tmp 副本）
+node redact-test.mjs         # 凭据脱敏：漏报与误报两侧 + 端到端上下文
 ```
 
 这些脚本会读写 `$DSH_HOME/next-message/`。想拿一份干净环境跑，加 `DSH_HOME=/tmp/whatever`。

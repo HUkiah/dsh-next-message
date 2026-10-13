@@ -452,6 +452,9 @@ class NextMessageService extends Service {
 
       const context = impl.buildContext(session, this.config, { todos });
       if (context === null) return;
+      // 脱敏在 impl 层是隐形的：这里数一下这次上下文里抹掉了几个凭据，写进日志。
+      // 有这条才能回答「脱敏到底有没有在工作」，也是发现误伤的入口（数字突然变高就该看上下文）。
+      const redactions = (context.match(/\[redacted:/g) ?? []).length;
       // 预测当时的上一条助手消息，跟着建议一起缓存，最后写进 outcome 供评审使用。
       const lastAssistant =
         typeof impl.lastAssistantMessage === 'function' ? impl.lastAssistantMessage(session) : null;
@@ -500,6 +503,7 @@ class NextMessageService extends Service {
           ms: Date.now() - startedAt,
           // too-long 时这是唯一的证据：模型想写多长，才判定 240 该不该再放宽。
           rawChars: verdict.rawChars,
+          redactions,
           raw: raw.slice(0, 200),
         });
         return;
@@ -513,6 +517,7 @@ class NextMessageService extends Service {
         model: `${route.provider}/${route.model}`,
         ms: Date.now() - startedAt,
         contextChars: context.length,
+        redactions,
         chars: verdict.text.length,
         // rawChars 是清洗后的码点长度。ok 时与 chars 相同；too-long 时只留在 abstain 行里，
         // 那是判断「上限要不要再放宽」的唯一依据（现在只丢弃、不裁剪，所以没有 clipped）。

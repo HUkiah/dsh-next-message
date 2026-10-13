@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-next-message",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "description": "在会话输入框里预测你的下一句话：一轮回复结束后给出灰色建议，Tab / 右方向键 / Enter 接受。",
   "license": "MIT",
