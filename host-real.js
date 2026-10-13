@@ -498,6 +498,8 @@ class NextMessageService extends Service {
           sessionId: String(session.id),
           turn,
           ms: Date.now() - startedAt,
+          // too-long 时这是唯一的证据：模型想写多长，才判定 240 该不该再放宽。
+          rawChars: verdict.rawChars,
           raw: raw.slice(0, 200),
         });
         return;
