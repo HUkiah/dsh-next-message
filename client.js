@@ -108,10 +108,13 @@ window.__ModuleLoader__.load({
       tag.dataset.plugin = PKG;
       tag.dataset.pluginCss = STYLE_ID;
       tag.textContent = [
+        // 灰字要能把整条建议显示完，所以不省略、允许换行（overflow-wrap 兜住长路径/长
+        // token）。换行带来的高度由 Ghost 组件显式抬高编辑器最小高度来腾地方——host 是
+        // 绝对定位，撑不高卡片，光换行会盖住下面的工具栏。
         `.${css.host}{position:absolute;z-index:5;display:flex;align-items:baseline;gap:6px;`,
-        'pointer-events:none;user-select:none;overflow:hidden;white-space:nowrap;',
+        'pointer-events:none;user-select:none;white-space:pre-wrap;overflow-wrap:anywhere;',
         'color:var(--dsw-alias-label-caption);max-width:calc(100% - 28px)}',
-        `.${css.text}{overflow:hidden;text-overflow:ellipsis}`,
+        `.${css.text}{white-space:pre-wrap;overflow-wrap:anywhere}`,
         `.${css.key}{flex:none;font-size:.75em;line-height:1.4;padding:0 5px;border-radius:4px;`,
         'border:1px solid currentColor;opacity:.6}',
         `.${css.status}{font-size:11px;line-height:1.6;opacity:.85;color:var(--dsw-alias-label-caption);`,
@@ -250,13 +253,35 @@ window.__ModuleLoader__.load({
         const host = hostRef.current;
         const card = host === null ? null : host.closest('[data-composer-card]');
         if (host === null || card === null) return undefined;
-        if (visible) {
-          card.setAttribute('data-next-message', '');
-          alignToPlaceholder(host, card);
-        } else {
+        const editor = card.querySelector('[contenteditable]');
+        // 先复位上一轮抬过的高度，否则 min-height 会一轮轮叠加。
+        const reset = () => {
+          if (editor !== null) editor.style.removeProperty('min-height');
+        };
+        if (!visible) {
           card.removeAttribute('data-next-message');
+          reset();
+          return undefined;
         }
-        return () => card.removeAttribute('data-next-message');
+        card.setAttribute('data-next-message', '');
+        reset();
+        alignToPlaceholder(host, card);
+        // 灰字换行之后有多高，就让编辑器长多高——卡片随之长高，工具栏被顶下去而不是被盖住。
+        // 和真的在输入框里打这么多字是同一个效果，所以布局不会显得突兀。
+        if (editor !== null) {
+          const lineHeight = Number.parseFloat(window.getComputedStyle(editor).lineHeight);
+          const line = Number.isFinite(lineHeight) && lineHeight > 0 ? lineHeight : 20;
+          const extra = host.getBoundingClientRect().height - line;
+          if (extra > 1) {
+            editor.style.minHeight = `${String(Math.round(editor.clientHeight + extra))}px`;
+            // 长高之后锚点可能位移，重新对齐一次。
+            alignToPlaceholder(host, card);
+          }
+        }
+        return () => {
+          card.removeAttribute('data-next-message');
+          reset();
+        };
       }, [visible, suggestion]);
 
       // 离开这个会话时清掉建议、取消在飞请求。延迟是为了区分真正的离开与重挂载。
