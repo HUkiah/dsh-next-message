@@ -54,8 +54,8 @@ dsh plugin --profile desktop add /abs/path/to/dsh-next-message
   config:
     enabled: true
     timeoutMs: 20000
-    maxOutputTokens: 200
-    maxSuggestionChars: 60
+    maxOutputTokens: 512
+    maxSuggestionChars: 240
     maxContextChars: 6000
     reasoningEffort: "off"
 ```
@@ -64,8 +64,8 @@ dsh plugin --profile desktop add /abs/path/to/dsh-next-message
 |---|---|---|
 | `enabled` | `true` | 总开关 |
 | `timeoutMs` | `20000` | 单次预测的超时；超时只是这一轮不出建议 |
-| `maxOutputTokens` | `200` | 预测调用的输出上限 |
-| `maxSuggestionChars` | `60` | 字符上限。超出时按**最近的子句边界**裁剪（句末标点保留，逗号/分号丢掉）；裁完不足上限一半就整条丢弃——不硬切，宁可不给半句。裁剪记在日志的 `rawChars` / `clipped` |
+| `maxOutputTokens` | `512` | 输出上限，只是封顶不会凭空变慢。给够是为了让一条完整、带约束的指令不被截断成 `invalid-json`（240 个汉字约 300–400 token，再算上 JSON 信封） |
+| `maxSuggestionChars` | `240` | 字符上限（对齐 Codex 提示词的量级）。**超出就整条丢弃，绝不裁剪**——半句比没有建议更糟。被丢弃的那条会在日志里留下 `reason: too-long` 与 `rawChars`，那就是「上限要不要再放宽」的依据 |
 | `maxContextChars` | `6000` | 送给模型的上下文上限（首条任务陈述 + 近期对话） |
 | `reasoningEffort` | `"off"` | 预测调用的推理档位。调高会明显变慢，输入框里的等待是有感知的 |
 
@@ -75,7 +75,7 @@ dsh plugin --profile desktop add /abs/path/to/dsh-next-message
 
 | 文件 | 内容 |
 |---|---|
-| `next-message.log` | 逐行 JSON。看这几类就够了：`apply`（host 半挂载，带 `scriptMtime` 能证明跑的是哪一版文件）、`diag`（自检快照）、`suggestion`（出了建议，带 `ms`/`rawChars`/`clipped`）、`abstain`（没出，带 `reason`）、`outcome`（建议 vs 你实际发的那句）、`judge`（离线评审汇总） |
+| `next-message.log` | 逐行 JSON。看这几类就够了：`apply`（host 半挂载，带 `scriptMtime` 能证明跑的是哪一版文件）、`diag`（自检快照）、`suggestion`（出了建议，带 `ms`/`rawChars`）、`abstain`（没出，带 `reason`）、`outcome`（建议 vs 你实际发的那句）、`judge`（离线评审汇总） |
 | `judge.json` | 离线评审的逐条判定，跨轮次累积 |
 
 `abstain` 的 reason 一眼能读懂：`abstained`（模型主动沉默）、`too-long`（超上限且裁不出完整子句）、`recycled`（和你刚说过的话重合）、`invalid-json`、`marker`、`empty`。
@@ -108,7 +108,7 @@ node report.mjs --n 40 --all     # 最近 40 对 / 全部
 |---|---|---|
 | `host.js` | 稳定入口壳。Loader 只导入它，它再用带时间戳的 URL 动态 import `host-real.js` | —（**别改成静态导入**，改了重载就会静默跑旧代码，`entry-shim-test.mjs` 会挡住） |
 | `host-real.js` | host 半：注册 typert manifest、每会话的建议缓存、监听会话事件 | Plugins 页关掉再打开 |
-| `impl.js` | 策略层：prompt、上下文裁剪、归一化、相似度、长度裁剪、离线评审 | 同上（实际是每次轮询都重新导入，改完一两秒即生效） |
+| `impl.js` | 策略层：prompt、上下文构造、脱敏、归一化、相似度、长度上限、离线评审 | 同上（实际是每次轮询都重新导入，改完一两秒即生效） |
 | `client.js` | 浏览器半，手写 module wrapper，**没有构建步骤** | 刷新页面 |
 | `paths.js` | 数据文件位置，唯一定义处 | 重启应用 |
 

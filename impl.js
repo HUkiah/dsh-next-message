@@ -62,8 +62,9 @@ export const SYSTEM = [
   'would say it. Carry their standing constraints along when they bear on that step, for example',
   '"keep the existing HTTPS and safety checks" or "ask me before changing the cluster".',
   'Never a bare "\u7ee7\u7eed" or "ok": a complete, actionable instruction beats a vague fragment.',
-  'Aim for one clause, under 45 characters. Past 60 the suggestion is cut at the last clause boundary,',
-  'so put the requirement that matters most first.',
+  'Write the whole message: the concrete subject plus the constraints that bear on it, so the developer',
+  'can press Tab and send it without editing. One or two clauses is the usual size, and you have up to',
+  '240 characters \u2014 longer than that is discarded, never cut, so say what matters within the budget.',
   'Never output a message the developer already sent earlier in this conversation.',
   'Never output a greeting, thanks, or filler acknowledgement.',
   'Write in the same language as the developer\u2019s most recent message, and match their tone.',
@@ -292,39 +293,6 @@ function recentUserMessages(session) {
   return out.slice(-2);
 }
 
-/** 句末标点：裁到这里时标点本身留下。 */
-const SENTENCE_END = /[。！？!?.]/;
-/** 子句边界：裁到这里时丢掉标点（建议以逗号/分号结尾会很别扭）。 */
-const CLAUSE_END = /[，；：、,;:\s]/;
-
-/**
- * 超出上限时裁到最近的子句边界，而不是按字符硬切。
- *
- * 硬切会把模型好不容易带上的约束截成半个词（实测 6/64 条撞上限，其中
- * 「…aria-live 和日期未」「…是 suggestion 还是 abstai」这种断在词中间）。
- * 从上限往前找第一个边界，句末标点带上、子句标点丢掉；
- * 裁完还不到上限一半，说明只剩个残句，宁可不要。
- *
- * @param text - 已清洗的建议。
- * @param cap - 字符上限（按码点计）。
- * @returns {{ text: string | null, clipped: boolean }} 裁不动时 text 为 null。
- */
-function clipToBoundary(text, cap) {
-  const chars = [...text];
-  if (chars.length <= cap) return { text, clipped: false };
-  for (let index = cap - 1; index > 0; index -= 1) {
-    const char = chars[index];
-    const candidate = SENTENCE_END.test(char)
-      ? chars.slice(0, index + 1).join('')
-      : CLAUSE_END.test(char)
-        ? chars.slice(0, index).join('').trim()
-        : null;
-    if (candidate === null) continue;
-    return [...candidate].length * 2 >= cap ? { text: candidate, clipped: true } : { text: null, clipped: true };
-  }
-  return { text: null, clipped: true };
-}
-
 /**
  * 把模型原始输出变成最终建议。
  *
@@ -335,31 +303,33 @@ function clipToBoundary(text, cap) {
  *   marker       输出成了「（无）」这类标记
  *   recycled     与最近两条用户消息高度重合（回收开发者自己的话）
  *   empty        清洗后为空
- *   too-long     超过上限且找不到可用的子句边界（不硬切，宁可不给）
+ *   too-long     超过 maxSuggestionChars（**丢弃，不裁剪**）
  *
- * rawChars / clipped 会一起写进日志：以前只能靠「长度正好等于上限」反推被裁，
- * 现在能直接量裁剪率，也是 prompt 里那句长度要求的校验。
+ * 长度的立场：建议必须能完整表达意图，所以这里只做上限判定，绝不切半句——
+ * 半句比没有建议更糟（用户没法按 Tab，还得先猜被切掉的是什么）。上限由 prompt
+ * 与配置共同声明，默认 240（对齐 Codex 提示词里的量级）。
+ *
+ * rawChars 写进日志：ok 时等于 chars，too-long 时能直接看到模型想写多长——
+ * 那个数字就是「上限该不该再放宽」的依据。
  *
  * @param raw - 模型原始输出
  * @param session - 当前会话，用于回收检测
  * @param config - 插件配置，提供 maxSuggestionChars
- * @returns {{ text: string | null, reason: string, rawChars: number, clipped: boolean }}
+ * @returns {{ text: string | null, reason: string, rawChars: number }}
  */
 export function finalizeSuggestion(raw, session, config) {
   const envelope = parseEnvelope(raw);
-  if (envelope.kind === 'invalid') return { text: null, reason: 'invalid-json', rawChars: 0, clipped: false };
-  if (envelope.value === null) return { text: null, reason: 'abstained', rawChars: 0, clipped: false };
-  const clean = normalizeSuggestion(envelope.value);
-  const rawChars = [...clean].length;
-  if (clean === '') return { text: null, reason: 'empty', rawChars, clipped: false };
-  if (NO_SUGGESTION.has(clean.toLowerCase())) return { text: null, reason: 'marker', rawChars, clipped: false };
-  const clipped = clipToBoundary(clean, config?.maxSuggestionChars ?? 60);
-  if (clipped.text === null) return { text: null, reason: 'too-long', rawChars, clipped: true };
-  const text = clipped.text;
+  if (envelope.kind === 'invalid') return { text: null, reason: 'invalid-json', rawChars: 0 };
+  if (envelope.value === null) return { text: null, reason: 'abstained', rawChars: 0 };
+  const text = normalizeSuggestion(envelope.value);
+  const rawChars = [...text].length;
+  if (text === '') return { text: null, reason: 'empty', rawChars };
+  if (NO_SUGGESTION.has(text.toLowerCase())) return { text: null, reason: 'marker', rawChars };
+  if (rawChars > (config?.maxSuggestionChars ?? 240)) return { text: null, reason: 'too-long', rawChars };
   for (const earlier of recentUserMessages(session)) {
-    if (similarity(text, earlier) >= 0.9) return { text: null, reason: 'recycled', rawChars, clipped: clipped.clipped };
+    if (similarity(text, earlier) >= 0.9) return { text: null, reason: 'recycled', rawChars };
   }
-  return { text, reason: 'ok', rawChars, clipped: clipped.clipped };
+  return { text, reason: 'ok', rawChars };
 }
 
 /** 归一化后做字符二元组 Jaccard，中英文都能用。 */
@@ -396,7 +366,10 @@ export function similarity(a, b) {
 export function buildOptions({ provider, model, system, context, config, signal }) {
   const effort = config.reasoningEffort === undefined ? 'off' : config.reasoningEffort;
   const thinking = effort !== undefined && effort !== null && effort !== 'off' && effort !== 'none';
-  const base = config.maxOutputTokens ?? 96;
+  // 预算要够写下一条完整的、带约束的指令：240 个汉字（上限）大约 300–400 token，
+  // 再加 JSON 信封与偶发的思考链，96/200 都会把输出截断成 invalid-json——
+  // 那就不是「模型不会答」，而是我们没给它地方答。上限只是封顶，不会凭空变慢。
+  const base = config.maxOutputTokens ?? 512;
   const options = {
     provider,
     model,

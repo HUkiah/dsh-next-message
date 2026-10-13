@@ -11,7 +11,9 @@
       config:
         enabled: true
         timeoutMs: 20000
-        maxOutputTokens: 200
-        maxSuggestionChars: 60
+        # 上限只是封顶，不会凭空变慢；给够是为了让一条完整、带约束的指令不被截成 invalid-json。
+        maxOutputTokens: 512
+        # 超过就整条丢弃，绝不切半句。240 对齐 Codex 提示词里的量级。
+        maxSuggestionChars: 240
         maxContextChars: 6000
         reasoningEffort: "off"
