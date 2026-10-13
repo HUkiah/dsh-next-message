@@ -72,6 +72,69 @@ export const SYSTEM = [
 /** 明确的「没有建议」标记：模型偶尔不按 JSON 输出，用这些兜一层。 */
 const NO_SUGGESTION = new Set(['（无）', '(无)', '无建议', 'none', 'n/a', 'null', '<empty>', 'no suggestion']);
 
+/**
+ * 送进模型前的凭据脱敏。
+ *
+ * 预测调用复用会话的 provider/model，但 config.provider/model 允许把它指到别处；
+ * 而且上下文里带着工具调用参数（`[tool call: bash {...}]`）——密钥、连接串、
+ * 令牌正是从那里漏出去的。下游（评审）看到的是同一份文本，所以在这一层收口。
+ *
+ * 取舍：宁可多报也不漏（漏一次的代价不可逆，误报只是让模型少看到一段字符串）。
+ * 但**不做**泛化的「长随机串」启发式：文件名、commit hash、base64 图片都会中招，
+ * 而那些是准确率最强的具体性信号。
+ *
+ * 替换成带类型的标记而不是空串：模型仍能理解这里原本是什么，只是看不到值。
+ * @param text - 任意文本。
+ * @returns 脱敏后的文本。
+ */
+export function redactSecrets(text) {
+  let out = String(text ?? '');
+  for (const [name, pattern] of SECRET_PATTERNS) {
+    out = out.replace(pattern, (match, ...groups) => {
+      // 带捕获组的规则自己做局部替换（例如只抹掉连接串里的口令部分）
+      if (name === 'url-credentials') return `${String(groups[0])}[redacted:password]@`;
+      return `[redacted:${name}]`;
+    });
+  }
+  return out;
+}
+
+/**
+ * 凭据规则表。顺序有意义：先处理结构化的连接串与 PEM，再处理带前缀的令牌，
+ * 最后才是 `key=value` 这类容易误伤的通用形态。
+ * @type {ReadonlyArray<readonly [string, RegExp]>}
+ */
+export const SECRET_PATTERNS = [
+  // 私钥整块：从 BEGIN 到 END 全部抹掉
+  ['private-key', /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g],
+  // postgres://user:pw@host —— 只抹口令，保留协议与主机（那是有效的上下文）
+  ['url-credentials', /([a-z][a-z0-9+.-]*:\/\/[^\s:/@]+:)[^\s:/@]+@/gi],
+  // Bearer / Basic 认证头
+  ['bearer', /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{12,}/gi],
+  // 各家带前缀的令牌。sk-ant- 必须排在 sk- 之前，否则永远被前者吃掉、标记也会写错
+  ['anthropic-key', /\bsk-ant-[A-Za-z0-9_-]{16,}/g],
+  ['openai-key', /\bsk-[A-Za-z0-9_-]{16,}/g],
+  ['github-token', /\b(?:gh[pousr]|github_pat)_[A-Za-z0-9_]{16,}/g],
+  ['slack-token', /\bxox[abprs]-[A-Za-z0-9-]{10,}/g],
+  ['stripe-key', /\b[rs]k_(?:live|test)_[A-Za-z0-9]{16,}/g],
+  ['aws-access-key', /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g],
+  ['google-api-key', /\bAIza[0-9A-Za-z_-]{35}\b/g],
+  ['jwt', /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g],
+  // key = "value" / password: value
+  //
+  // 三处细节，都是被真实文本逼出来的：
+  //   - 键名允许带前缀（`DB_PASSWORD=`、`OPENAI_API_KEY=`），否则最常见的 env dump 全漏；
+  //   - 值前面加否定预查，跳过 `process.env.X` / `config.x` / `${VAR}` 这类**引用**——
+  //     脱敏是防腐，不是把代码读不懂；
+  //   - 值要够长（12+），`token = getToken()` 这种短标识符不误伤。
+  [
+    'assigned-secret',
+    /\b[A-Za-z0-9_-]*(?:api[_-]?key|apikey|secret[_-]?(?:access[_-]?)?key|access[_-]?key|secret|access[_-]?token|refresh[_-]?token|auth[_-]?token|password|passwd|pwd|token)\b\s*[:=]\s*["'`]?(?!(?:process\.env|os\.environ|env\.|config\.|this\.|self\.|settings\.|options\.|\$\{?[A-Za-z_]))[A-Za-z0-9._~+/=-]{12,}["'`]?/gi,
+  ],
+  // 中文写法：密码/密钥/令牌：值
+  ['assigned-secret-zh', /(?:密码|口令|密钥|令牌)\s*[:：=]\s*\S{6,}/g],
+];
+
 /** 一条消息在预测上下文里的紧凑表示。工具调用的名字和参数都要留：文件名是最强的具体性信号。 */
 function renderMessage(message) {
   const parts = [];
@@ -85,7 +148,8 @@ function renderMessage(message) {
       parts.push(`[tool call: ${name}${args === '' ? '' : ` ${args.slice(0, 160)}`}]`);
     }
   }
-  return parts.join('\n');
+  // 出口统一脱敏：上下文、回收检测、评审上下文都经过这里
+  return redactSecrets(parts.join('\n'));
 }
 
 /**
@@ -208,7 +272,8 @@ export function lastAssistantMessage(session) {
         .map((block) => block.text.trim())
         .filter((value) => value !== '')
         .join('\n');
-      if (text !== '') return text.slice(0, 600);
+      // 脱敏与上下文同源：这段文本会写进 outcome 日志，再被送进评审模型。
+      if (text !== '') return redactSecrets(text).slice(0, 600);
     }
   } catch {
     // 取不到就留空，不影响预测本身。
@@ -564,22 +629,26 @@ async function runJudge({ ctx, log }) {
     }
 
     // 主建议与影子建议各自成为一条样本，共享同一个 context 与 actual，天然配对。
+    //
+    // 这里再脱敏一次：context 走 lastAssistantMessage 时已经脱过，但 actual / suggestion
+    // 是消息原文与模型输出，没经过 renderMessage。评审同样是「把内容送出去」的边界，
+    // 三样一起过一遍，代价是每条样本多几次正则替换。
     const samples = [];
     for (const row of outcomes) {
       const shared = {
         session: String(row.sessionId ?? '').slice(-6),
-        context: row.context ?? contextFor(ctx, row.sessionId, row.actual) ?? '(context unavailable)',
-        actual: row.actual,
+        context: redactSecrets(row.context ?? contextFor(ctx, row.sessionId, row.actual) ?? '(context unavailable)'),
+        actual: redactSecrets(row.actual),
         userPressedTab: row.acceptedViaTab === true,
       };
-      samples.push({ ...shared, id: samples.length, variant: 'primary', suggestion: row.suggested });
+      samples.push({ ...shared, id: samples.length, variant: 'primary', suggestion: redactSecrets(row.suggested) });
       const shadow = row.shadow;
       if (shadow !== null && typeof shadow === 'object' && typeof shadow.text === 'string' && shadow.text !== '') {
         samples.push({
           ...shared,
           id: samples.length,
           variant: `shadow:${String(shadow.effort ?? '?')}`,
-          suggestion: shadow.text,
+          suggestion: redactSecrets(shadow.text),
         });
       }
     }

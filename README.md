@@ -88,6 +88,18 @@ node report.mjs --session 05a27f # 只看某个会话
 node report.mjs --n 40 --all     # 最近 40 对 / 全部
 ```
 
+## 隐私
+
+送进模型的内容都会先过一遍凭据脱敏（`impl.js` 的 `redactSecrets`，13 条规则）：
+
+- 私钥整块（PEM）、连接串里的口令（`postgres://user:pw@host`）、`Bearer` / `Basic` 认证头；
+- 各家带前缀的令牌：`sk-` / `sk-ant-` / `ghp_` / `xoxb-` / `sk_live_` / `AKIA` / `AIza` / JWT；
+- 赋值形态的密钥（含 `DB_PASSWORD=`、`OPENAI_API_KEY=` 这类带前缀键名）与中文的 `密码：…`。
+
+替换成 `[redacted:类型]` 标记而不是空串，模型仍知道这里原本是什么。**故意不做**"长随机串"这类泛化启发式——文件名、commit hash、base64 图片都会被误伤，而它们正是准确率最强的具体性信号；同理，值是 `process.env.X` / `config.x` / `${VAR}` 这类**引用**时不脱敏。
+
+三个模型边界都覆盖：预测上下文、写进日志供评审用的助手上下文、评审 payload 本身。所以 `next-message.log` 与 `judge.json` 里也不会留下密钥。
+
 ## 开发
 
 分层和热加载边界：
